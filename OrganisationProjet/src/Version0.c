@@ -150,7 +150,7 @@ void write_to_file(const char *path, const char *new_content)
 }// takes the path of the file that the user wishes to write some content on 
 // Then it writes this content on the file
 
-static int do_getattr(const char *path, struct stat *st)
+static int do_getattr(const char *path, struct stat *st, struct fuse_file_info *fi)
 {
 	printf("[getattr] Called\n");
 	printf("\tAttributes of %s requested\n", path);
@@ -191,7 +191,7 @@ static int do_getattr(const char *path, struct stat *st)
 }
 
 
-static int do_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+static int do_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags fl)
 {
 	printf("--> Getting The List of Files of %s\n", path);
 
@@ -204,7 +204,7 @@ static int do_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, of
 		{
 			filler(buffer, dir_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
 		}
-		for(int curr_idx= 0; curr_idx <= curr_file_idx; curr_idx)
+		for(int curr_idx= 0; curr_idx <= curr_file_idx; curr_idx++)
 		{
 			filler(buffer, files_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
 		}
