@@ -4,8 +4,8 @@ CC = gcc
 CFLAGS = 
 LDFLAGS = -lfuse3
 
-SOURCE = tst1.c #the source code who creates the fileSystem
-EXECUTABLE = tst1 # the name of the executable that will be executated
+SOURCE = Version0.c #the source code who creates the fileSystem
+EXECUTABLE = Version0 # the name of the executable that will be executated
 LOG_DIR = ./logs # name of the log directory
 MOUNT_DIR = ./mnt # name of the directory in which we will mount our fileSystem
 Output.log = ./logs/output.log # name of the output s directory of the command
