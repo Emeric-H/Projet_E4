@@ -51,8 +51,89 @@
 //The goal of the data structure is to keep the list of directories and files which are created by the user, also, the content of these files will be maintained by one of these data structures. 
 //Because we aim to create a simple filesystem here, our data structures will be simple arrays.
 
+#define block_size 1024
 
-char dir_list[256][256]; //first arry, hich maintains the names of directories that have been created by the user
+typedef struct superblock {
+	char datablocks[block_size*100];
+	char data_bitmap[105];
+	char inode_bitmap[105];
+} superblock;
+
+typedef struct inode {
+	int datablocks[16];
+	int number;
+	int blocks;
+	int size;
+} inode;
+
+typedef struct filetype {
+	int valid;
+	char test[10];
+	char path[100];
+	char name[100];
+	inode *inum;
+	struct filetype ** children;
+	int num_children;
+	int num_links;
+	struct filetype * parent;
+	char type[20];
+	mode_t permissions;
+	uid_t user_id;
+	gid_t group_id;
+	time_t access_t;
+	time_t modified_t;
+	time_t change_t;
+	time_t creation_t;
+	off_t size;
+
+	int datablocks[16];
+	int number;
+	int blocks;
+
+} filetype;
+
+superblock spblock;
+
+void initialize_superblock(){
+	memset(spblock.data_bitmap, '0', 100*sizeof(char));
+	memset(spblock.inode_bitmap, '0', 100*sizeof(char));
+}
+
+filetype * root;
+
+void initialize_root_directory() {
+	spblock.inode_bitmap[1]=1;
+	root = (filetype *) malloc(sizeof(filetype));
+
+	strcpy(root->path, "/");
+	strcpy(root->name, "/");
+
+	root->children = NULL;
+	root->num_children = 0;
+	root->parent = NULL;
+	root->num_links=2;
+	root->valid = 1;
+
+	strcpy(root->test, "test");
+	strcpy(root->type, "directory");
+
+	root->creation_t = time(NULL);
+	root->access_t = time(NULL);
+	root->modified_t = time(NULL);
+	root->change_t = time(NULL);
+
+	root->permissions = S_IFDIR | 0777;
+
+	root->size = 0;
+	root->group_id = getgid();
+	root->user_id = getuid();
+
+	root->number = 2;
+	root->blocks = 0;
+}
+
+
+/*char dir_list[256][256]; //first arry, hich maintains the names of directories that have been created by the user
 int curr_dir_idx= -1;// current index of dir_list start whith -1 because initially there should be no entry
 
 char files_list[ 256 ][ 256 ];// second array, which maintains the contthe names of the files that have been created by the user
@@ -60,11 +141,452 @@ int curr_file_idx = -1;// current index of file_list
 
 char files_content[ 256 ][ 256 ];// maintains the contents of the files
 int curr_files_content_idx = -1;// current index of file_content
-
+*/
 // each array can store 256 strings and each string has the maximum length of 256 bytes
 // That means we can only create 256 directories and 256 files
 // The length of filename, directory name or file content can be only 256 character
 
+filetype * filetype_from_path(const char * path){
+	char curr_folder[100];
+	char * path_name = malloc(strlen(path)+2);
+
+	strcpy(path_name, path);
+
+	filetype * curr_node = root;
+
+	fflush(stdin);
+	
+	if(strcmp(path_name, "/") == 0)
+		return curr_node;
+
+	if(path_name[0] != '/'){
+		fprintf(stderr,"Incorrect path\n");
+		exit(1);
+	}
+	else{
+		path_name++;
+	}
+
+	if(path_name[strlen(path_name)-1] == '/'){
+		path_name[strlen(path_name)-1] = '\0';
+	}
+
+	char * index;
+	int flag = 0;
+
+	while(strlen(path_name) != 0){
+		index = strchr(path_name, '/');
+
+		if(index != NULL){
+			strncpy(curr_folder, path_name, index - path_name);
+			curr_folder[index-path_name] = '\0';
+
+			flag = 0;
+			for(int i = 0; i < curr_node->num_children;i++){
+				if(strcmp((curr_node->children)[i]->name, curr_folder) == 0){
+					curr_node = (curr_node->children)[i];
+					flag = 1;
+					break;
+				}
+			}
+			if(flag == 0)
+				return NULL;
+		}
+		else{
+			strcpy(curr_folder, path_name);
+			for(int i = 0; i < curr_node->num_children; i++){
+				if(strcmp((curr_node->children)[i]->name, curr_folder) == 0){
+					curr_node = (curr_node->children)[i];
+					return curr_node;
+				}
+			}
+			return NULL;
+		}
+		path_name = index+1;
+	}
+}
+
+int find_free_inode(){
+	for(int i = 2; i < 100;i++){
+		if(spblock.inode_bitmap[i] == '0'){
+			spblock.inode_bitmap[i] = '1';
+			return i;
+		}
+	}
+}
+
+int find_free_db(){
+	for (int i = 1; i < 100; i++){
+		if(spblock.data_bitmap[i] == '0'){
+			spblock.data_bitmap[i] = '1';
+		}
+		return i;
+	}
+}
+
+void add_child(filetype * parent, filetype * child){
+	(parent->num_children)++;
+
+	parent->children = realloc(parent->children, (parent->num_children)*sizeof(filetype *));
+
+	(parent->children)[parent->num_children-1] = child;
+}
+
+static int do_mkdir(const char *path, mode_t mode){
+	int index = find_free_inode();
+
+	filetype * new_folder = malloc(sizeof(filetype));
+
+	char * pathname = malloc(strlen(path)+2);
+	strcpy(pathname, path);
+
+	char * rindex = strrchr(pathname, '/');
+
+	strcpy(new_folder->name, rindex+1);
+
+	strcpy(new_folder->path, pathname);
+
+	*rindex = '\0';
+
+	if(strlen(pathname) == 0)
+		strcpy(pathname, "/");
+
+	new_folder->children = NULL;
+	new_folder->num_children = 0;
+	new_folder->parent = filetype_from_path(pathname);
+	new_folder->num_links = 2;
+	new_folder->valid = 1;
+	strcpy(new_folder->test, "test");
+
+	if(new_folder->parent == NULL)
+		return -ENOENT;
+
+	add_child(new_folder->parent, new_folder);
+
+	strcpy(new_folder->type, "directory");
+
+	new_folder->creation_t = time(NULL);
+	new_folder->access_t = time(NULL);
+	new_folder->modified_t = time(NULL);
+	new_folder->change_t = time(NULL);
+
+	new_folder->permissions = S_IFDIR | 0755;
+
+	new_folder->size = 0;
+	new_folder->group_id = getgid();
+	new_folder->user_id = getuid();
+
+	new_folder->number = index;
+	new_folder->blocks = 0;
+
+	return 0;
+}
+
+int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi){
+
+	filler(buffer, ".", NULL, 0, FUSE_BUF_NO_SPLICE);
+	filler(buffer, "..", NULL, 0, FUSE_BUF_NO_SPLICE);
+
+	char * pathname = malloc(strlen(path)); //Y'avait +2
+	strcpy(pathname, path);
+
+	filetype * dir_node = filetype_from_path(pathname);
+
+	if(dir_node == NULL){
+		return -ENOENT;
+	}
+	else{
+		dir_node->access_t=time(NULL);
+		for(int i = 0; i < dir_node->num_children; i++)
+			filler(buffer, dir_node->children[i]->name, NULL, 0, FUSE_BUF_NO_SPLICE);
+	}
+	return 0;
+}
+
+static int do_getattr(const char *path, struct stat *statit, struct fuse_file_info *fi){
+	char *pathname;
+	pathname = (char *)malloc(strlen(path)+2);
+	
+	strcpy(pathname, path);
+
+	filetype * file_node = filetype_from_path(pathname);
+
+	if(file_node == NULL)
+		return -ENOENT;
+
+	statit->st_uid = file_node->user_id;
+	statit->st_gid = file_node->group_id;
+	statit->st_atime = file_node->access_t; 
+	statit->st_mtime = file_node->modified_t; 
+	statit->st_ctime = file_node->creation_t;
+	statit->st_mode = file_node->permissions;
+	statit->st_nlink = file_node->num_links + file_node->num_children;
+	statit->st_size = file_node->size;
+	statit->st_blocks = file_node->blocks;
+
+	return 0;	
+}
+
+int do_rmdir(const char * path){
+
+	char * pathname = malloc(strlen(path)+2);
+	strcpy(pathname, path);
+
+	char * rindex = strrchr(pathname, '/');
+	char * folder_delete = malloc(strlen(rindex+1)+2);
+	
+	strcpy(folder_delete, rindex+1);
+
+	*rindex = '\0';
+
+	if(strlen(pathname)==0)
+		strcpy(pathname, "/");
+
+	filetype * parent = filetype_from_path(pathname);
+
+	if(parent == NULL)
+		return -ENOENT;
+
+	if(parent->num_children==0)
+		return -ENOENT;
+
+	filetype * curr_child = (parent->children)[0];
+	int index = 0;
+	while(index < (parent->num_children)){
+		if(strcmp(curr_child->name, folder_delete) ==0){
+			break;
+		}
+		index++;
+		curr_child = (parent->children)[index];
+	}
+
+	if(index < (parent->num_children)){
+		if(((parent->children)[index]->num_children) != 0)
+			return -ENOTEMPTY;
+		for(int i = index+1; i < (parent->num_children); i++){
+			(parent->children)[i-1] = (parent->children)[i];
+		}
+		(parent->num_children) -= 1;
+	}
+
+	else{
+		return -ENOENT;
+	}
+	return 0;
+}
+
+int do_rm(const char * path){
+
+	char * pathname = malloc(strlen(path)+2);
+	strcpy(pathname, path);
+
+	char * rindex = strrchr(pathname, '/');
+
+	char * folder_delete = malloc(strlen(rindex+1)+2);
+	
+	strcpy(folder_delete, rindex+1);
+
+	*rindex = '\0';
+
+	if(strlen(pathname) == 0)
+		strcpy(pathname, "/");
+
+	filetype * parent = filetype_from_path(pathname);
+
+	if(parent == NULL)
+		return -ENOENT;
+
+	if(parent->num_children==0)
+		return -ENOENT;
+
+	filetype * curr_child = (parent->children)[0];
+	int index = 0;
+	while(index < (parent->num_children)){
+		if(strcmp(curr_child->name, folder_delete)==0){
+			break;
+		}
+		index++;
+		curr_child = (parent->children)[index];
+	}
+
+	if(index < (parent->num_children)){
+		if(((parent->children)[index]->num_children) != 0)
+			return -ENOTEMPTY;
+		for(int i = index+1; i < (parent->children); i++){
+			(parent->children)[i-1] = (parent->children)[i];
+		}
+		(parent->num_children) -= 1;
+	}
+	else{
+		return -ENOENT;
+	}
+	return 0;
+}
+
+int do_create(const char * path, mode_t mode, struct fuse_file_info *fi) {
+
+
+	int index = find_free_inode();
+
+	filetype * new_file = malloc(sizeof(filetype));
+
+	char * pathname = malloc(strlen(path)+2);
+	strcpy(pathname, path);
+
+	char * rindex = strrchr(pathname, '/');
+
+	strcpy(new_file -> name, rindex+1);
+	strcpy(new_file -> path, pathname);
+
+	*rindex = '\0';
+
+	if(strlen(pathname) == 0)
+		strcpy(pathname, "/");
+
+	new_file -> children = NULL;
+	new_file -> num_children = 0;
+	new_file -> parent = filetype_from_path(pathname);
+	new_file -> num_links = 0;
+	new_file -> valid = 1;
+
+	if(new_file -> parent == NULL)
+		return -ENOENT;
+
+	add_child(new_file->parent, new_file);
+
+	strcpy(new_file -> type, "file");
+
+	new_file->creation_t = time(NULL);
+	new_file->access_t = time(NULL);
+	new_file->modified_t = time(NULL);
+	new_file->change_t = time(NULL);
+
+	new_file -> permissions = S_IFREG | 0644;
+
+	new_file -> size = 0;
+	new_file->group_id = getgid();
+	new_file->user_id = getuid();
+
+
+	new_file -> number = index;
+
+	for(int i = 0; i < 16; i++){
+		(new_file -> datablocks)[i] = find_free_db();
+	}
+
+	new_file -> blocks = 0;
+
+
+	return 0;
+}
+
+
+int do_open(const char *path, struct fuse_file_info *fi) {
+
+	char * pathname = malloc(sizeof(path)+1);
+	strcpy(pathname, path);
+
+	filetype * file = filetype_from_path(pathname);
+
+	return 0;
+}
+
+int do_read(const char *path, char *buf, size_t size, off_t offset,struct fuse_file_info *fi) {
+
+	char * pathname = malloc(sizeof(path)+1);
+	strcpy(pathname, path);
+
+	filetype * file = filetype_from_path(pathname);
+	if(file == NULL)
+		return -ENOENT;
+
+	else{
+		char * str = malloc(sizeof(char)*1024*(file -> blocks));
+
+		strcpy(str, "");
+		int i;
+		for(i = 0; i < (file -> blocks) - 1; i++){
+			strncat(str, &spblock.datablocks[block_size*(file -> datablocks[i])], 1024);
+		}
+		strncat(str, &spblock.datablocks[block_size*(file -> datablocks[i])], (file -> size)%1024);
+		strcpy(buf, str);
+	}
+	return file->size;
+}
+
+int do_access(const char * path, int mask){
+	return 0;
+}
+
+
+int do_rename(const char* from, const char* to) {
+	
+	char * pathname = malloc(strlen(from)+2);
+	strcpy(pathname, from);
+
+	char * rindex1 = strrchr(pathname, '/');
+
+	filetype * file = filetype_from_path(pathname);
+
+	*rindex1 = '\0';
+
+	char * pathname2 = malloc(strlen(to)+2);
+	strcpy(pathname2, to);
+
+	char * rindex2 = strrchr(pathname2, '/');
+
+
+	if(file == NULL)
+		return -ENOENT;
+
+	strcpy(file -> name, rindex2+1);
+	strcpy(file -> path, to);
+
+	return 0;
+}
+
+int do_truncate(const char *path, off_t size) {
+	return 0;
+}
+
+int do_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+
+	char * pathname = malloc(sizeof(path)+1);
+	strcpy(pathname, path);
+
+	filetype * file = filetype_from_path(pathname);
+	if(file == NULL)
+		return -ENOENT;
+
+	int indexno = (file->blocks)-1;
+
+	if(file -> size == 0){
+		strcpy(&spblock.datablocks[block_size*((file -> datablocks)[0])], buf);
+		file -> size = strlen(buf);
+		(file -> blocks)++;
+	}
+	else{
+		int currblk = (file->blocks)-1;
+		int len1 = 1024 - (file -> size % 1024);
+		if(len1 >= strlen(buf)){
+			strcat(&spblock.datablocks[block_size*((file -> datablocks)[currblk])], buf);
+			file -> size += strlen(buf);
+		}
+		else{
+			char * cpystr = malloc(1024*sizeof(char));
+			strncpy(cpystr, buf, len1-1);
+			strcat(&spblock.datablocks[block_size*((file -> datablocks)[currblk])], cpystr);
+			strcpy(cpystr, buf);
+			strcpy(&spblock.datablocks[block_size*((file -> datablocks)[currblk+1])], (cpystr+len1-1));
+			file -> size += strlen(buf);
+			(file -> blocks)++;
+		}
+
+	}
+	return strlen(buf);
+}
+
+/*
 void add_dir(const char *dir_name)
 {
 	curr_dir_idx++;
@@ -191,22 +713,22 @@ static int do_getattr(const char *path, struct stat *st)
 }
 
 
-static int do_readdir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+static int do_readdir(const char* path, void* buffer, fuse_fill_dir_t , off_t offset, struct fuse_file_info *fi)
 {
 	printf("--> Getting The List of Files of %s\n", path);
 
-	filler(buffer, ".", NULL, 0, FUSE_BUF_NO_SPLICE); //Current Directory
-	filler(buffer, "..", NULL, 0, FUSE_BUF_NO_SPLICE); //Parent Directory
+	(buffer, ".", NULL, 0, FUSE_BUF_NO_SPLICE); //Current Directory
+	(buffer, "..", NULL, 0, FUSE_BUF_NO_SPLICE); //Parent Directory
 
 	if(strcmp( path, "/") == 0) // If the user is trying to show the files/directories of the root directory, show the following
 	{
 		for(int curr_idx= 0; curr_idx <= curr_dir_idx; curr_idx++)
 		{
-			filler(buffer, dir_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
+			(buffer, dir_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
 		}
 		for(int curr_idx= 0; curr_idx <= curr_file_idx; curr_idx)
 		{
-			filler(buffer, files_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
+			(buffer, files_list[curr_idx], NULL, 0, FUSE_BUF_NO_SPLICE);
 		}
 	}
 	return 0;
@@ -250,18 +772,26 @@ static int do_write(const char *path, const char *buffer, size_t size, off_t off
 
 	return size;
 }
+*/
 
 static struct fuse_operations operation = {
 	.getattr= do_getattr,
 	.readdir= do_readdir,
 	.read= do_read,
 	.mkdir= do_mkdir,
-	.mknod= do_mknod,
+	//.mknod= do_mknod,
 	.write= do_write,
+	.create=do_create,
+	.rename=do_rename,
+	.unlink=do_rm,
+	.open=do_open,
+	.rmdir=do_rmdir,
 };
 
 int main(int argc, char* argv[])
 {
+	initialize_superblock();
+	initialize_root_directory();
 	return fuse_main_real(argc, argv, &operation,sizeof(operation), NULL);
 }
 
